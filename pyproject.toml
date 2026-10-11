@@ -1,0 +1,8 @@
+[project]
+name = "norway-municipal-financial-performance"
+version = "0.1.0"
+description = "Data-first Norwegian municipal financial performance research"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100

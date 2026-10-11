@@ -1,0 +1,24 @@
+# Research datasets are immutable working inputs and must not be committed.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+.env
+.ipynb_checkpoints/
+/data/raw/ssb/*
+!/data/raw/ssb/.gitkeep
+/data/raw/klass/*
+!/data/raw/klass/.gitkeep
+/data/raw/metadata/*
+!/data/raw/metadata/.gitkeep
+/data/raw/municipal_reports/*
+!/data/raw/municipal_reports/.gitkeep
+/data/interim/*
+!/data/interim/.gitkeep
+/data/processed/*
+!/data/processed/.gitkeep
+/reports/*
+!/reports/.gitkeep
+*.log

@@ -1,0 +1,5 @@
+# Environment used for later official-source collection and data checks.
+# The workspace verifier itself uses only the Python standard library.
+requests>=2.32,<3
+pandas>=2.2,<3
+openpyxl>=3.1,<4

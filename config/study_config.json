@@ -1,0 +1,41 @@
+{
+  "study_id": "norway_municipal_financial_performance_2016_2025",
+  "protocol_version": "0.3_proposed_pending_audit_signoff",
+  "study_years": [
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "baseline_years": [
+    2016,
+    2017
+  ],
+  "discovery_years": [
+    2018,
+    2019,
+    2020,
+    2021,
+    2022
+  ],
+  "validation_years": [
+    2023,
+    2024,
+    2025
+  ],
+  "core_outcome_concepts": [
+    "net_operating_result_pct",
+    "unrestricted_reserve_ratio_pending_verified_numerator",
+    "net_loan_debt_burden_pct"
+  ],
+  "data_status": "RAW_DATA_NOT_COLLECTED",
+  "case_selection_permitted": false,
+  "models_permitted": false,
+  "source_of_truth": "research/preflight/00_READ_FIRST/collection_status.json"
+}

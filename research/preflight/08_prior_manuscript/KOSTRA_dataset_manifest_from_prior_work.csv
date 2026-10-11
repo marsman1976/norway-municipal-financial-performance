@@ -1,0 +1,10 @@
+table_id,slug,title,role,available_period,research_use,source_page
+12134,finance_key_figures,Financial key figures for municipalities,PRIMARY,2015-2025,"Core fiscal outcomes/predictors: operating surplus, working capital, interest exposure, net loan debt, unrestricted revenue, reserves, investment.",https://www.ssb.no/en/statbank1/table/12134/
+12364,finance_basic_data,Financial basic data by accounting concept,PRIMARY,2015-2025,Detailed municipal accounting values in NOK 1000; used to reconstruct and audit ratios.,https://www.ssb.no/en/statbank1/table/12364/
+13502,kindergarten_key_figures,Selected key figures kindergartens,SERVICE,2015-2025,"Coverage, staffing, teacher share and kindergarten expenditure/service indicators.",https://www.ssb.no/en/statbank1/table/13502/
+12209,health_care_key_figures,Selected key figures for health and care,SERVICE,2015-2025,"Health/care expenditures, staffing, service use and selected care outcomes.",https://www.ssb.no/en/statbank1/table/12209/
+11791,drinking_water_key_figures,Selected key figures for municipal drinking water,SERVICE,2015-2025,"Water-system costs, fees, renewal, leakage and hygienic safety.",https://www.ssb.no/en/statbank1/table/11791/
+11789,wastewater_key_figures,Selected key figures for municipal waste water,SERVICE,2015-2025,"Wastewater fees, renewal and compliance/service indicators.",https://www.ssb.no/en/statbank1/table/11789/
+07459,population_age_sex,Population by sex and one-year age groups,CONTROL,1986-2026,Population size and age structure; later reduced to study years and age bands.,https://www.ssb.no/en/statbank1/table/07459/
+13536,mean_median_age,Mean and median age in municipalities,CONTROL,2000-2026,Compact age-structure controls.,https://www.ssb.no/en/statbank1/table/13536/
+11618,employment_population,"Population and employed persons by sex and age, 4th quarter",CONTROL,2009-2025,Employment/population controls at municipality level.,https://www.ssb.no/en/statbank1/table/11618/

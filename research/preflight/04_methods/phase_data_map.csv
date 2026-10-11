@@ -1,0 +1,9 @@
+﻿phase,data_sources,intended_use,required_items,readiness
+Phase0_Freeze,"Prior manuscript, all official source titles",Research rationale and freeze descriptions,"Source docs, formulas, definitions",NOT_STARTED__DATA_PENDING
+Phase1A,"All tables, KLASS-131, KLASS-231",Verify source identity and raw data integrity,"Raw exports, api metadata, provenance, status footnotes",NOT_STARTED__DATA_PENDING
+Phase1B,"12134,12143,12364,07459,KLASS-131,KLASS-231",Choose one comparable high and low performer using 2016-17 covariates and 2018-22 outcomes,"P1,P2,P3 and baseline covariates only",NOT_STARTED__DATA_PENDING
+Phase2,All finance ratios + municipal annual reports,Analyze strong case 2016-2025,Full matched variables and when available audited accounts,NOT_STARTED__DATA_PENDING
+Phase3,Same as Phase2,Analyze weak case 2016-2025,Exactly same definitions and years,NOT_STARTED__DATA_PENDING
+Phase4,All verified ratios + service safeguards,Compare pair trajectories and candidate factors,Identically constructed ratios and uncertainty notes,NOT_STARTED__DATA_PENDING
+Phase5,National panel and held-out 2023-2025,Fixed effects tests and out-of-time ML,Verified common municipal panel; no leakage,NOT_STARTED__DATA_PENDING
+Phase6,"Investments, services and case study documents",Evaluate actionable priority factors,Causal limitations and project-specific ROI/NPV,NOT_STARTED__DATA_PENDING

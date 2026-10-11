@@ -1,0 +1,24 @@
+{
+  "prepared_utc": "2026-10-10T03:01:05.686679+00:00",
+  "research_window": "2016-2025",
+  "collection_status": "BLOCKED_SOURCE_NETWORK_UNAVAILABLE",
+  "data_rows_collected": 0,
+  "raw_ssb_files_downloaded": 0,
+  "raw_klass_files_downloaded": 0,
+  "source_catalog_entries": 37,
+  "conceptual_variables": 54,
+  "ratio_inventory": 77,
+  "audit_checks": 24,
+  "municipalities_selected": 0,
+  "financial_ratios_computed": 0,
+  "quality_gate": "FAIL_NOT_RUN",
+  "blocking_issues": [
+    "Official numeric API downloads inaccessible",
+    "P2 unrestricted reserve definition not verified",
+    "KLASS changes and KOSTRA 2016/2017 group crosswalk absent",
+    "Detailed balance sheet 2016–2019 cannot be assumed"
+  ],
+  "user_action": "Export official raw datasets in a network-enabled SSB environment and upload them for verification",
+  "prior_reusable_numeric_datasets_found": 0,
+  "prior_source_manifest_found": 1
+}
