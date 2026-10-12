@@ -1,0 +1,9 @@
+id,issue,scientific_response,status,next_step
+P1A6-01,Newer municipal codes used for 2016; all null pilot,Fixed by 2016 KLASS code intersection; 18/18 valid values,FIXED_FOR_PILOT,Extend logic to all years
+P1A6-02,Table title/labels do not prove detailed accounting formula,Do not equate source label with audited numerator/denominator,OPEN_BLOCKER,Reconstruct with 12364 and manual code list
+P1A6-03,Free equity operational account is not equivalent to disposisjonsfond,Prevent P2 case selection from this proxy,OPEN_BLOCKER,Acquire actual unrestricted reserve fund and deficits
+P1A6-04,KOSTRA municipality groups changed in 2019/2020,Baseline group matching must use frozen contemporaneous crosswalk,OPEN_BLOCKER,Retrieve 2016/2017 groups and track changes separately
+P1A6-05,2019/2020 regional changes and account chart changes,Potential artificial changes in 10-year panel,OPEN_BLOCKER,"Historically harmonized, year-specific source and bridge audit"
+P1A6-06,Municipality vs consolidated accounts may differ,Scope mixing invalidates comparisons,OPEN_BLOCKER,Document primary municipal scope and consolidated sensitivity
+P1A6-07,One-year complete pilot does not prove nationwide completeness,Cannot infer full panel coverage from 18 values,OPEN_BLOCKER,Controlled historical collection plus completeness matrix
+P1A6-08,2016 financial values are rounded published indicators,Cannot exactly reverse-engineer accounting values from them,LIMITATION,Use original account amounts and documented rounding tolerance

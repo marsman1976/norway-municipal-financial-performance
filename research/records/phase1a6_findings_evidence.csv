@@ -1,0 +1,13 @@
+id,claim,evidence,status,type,next_requirement
+F1A6-001,4 required evidence files were supplied,"Local ZIP contents, SHA-256 manifest",VERIFIED_SOURCE_RECEIPT,Technical,Refer to definition matrix and release gate
+F1A6-002,Original 2016 pilot data retain SHA-256 181abcb1… and 18 finite values,"Source original JSON-stat2, hash and values",VERIFIED_TECHNICAL,Technical,Refer to definition matrix and release gate
+F1A6-003,2016 codes 0101 Halden / 0104 Moss appear in supplied official KLASS 2016 list,KLASS codes_2016.json and pilot dimension,VERIFIED_SOURCE_CROSSCHECK,Technical,Refer to definition matrix and release gate
+F1A6-004,Nine published 12134 labels and units align with definition-review CSV,SSB metadata category labels and units,VERIFIED_METADATA,Metadata,Refer to definition matrix and release gate
+F1A6-005,Eight ratio indicators are percent; unrestricted revenue per capita is NOK,SSB metadata content category unit fields,VERIFIED_METADATA,Metadata,Refer to definition matrix and release gate
+F1A6-006,No missing numerical values in corrected 2016 two-municipality pilot,18 JSON-stat2 values; no nulls,VERIFIED_PILOT_ONLY,Technical,Refer to definition matrix and release gate
+F1A6-007,Free equity operational account differs from unrestricted reserves alone,SSB indicator definition popup: distributable reserves less annual deficit,VERIFIED_CONSTRUCT_WARNING,Scientific definition,Refer to definition matrix and release gate
+F1A6-008,SSB table 12134 source metadata flags 2019–2020 group classification break,Preserved table-level note / official table page,VERIFIED_DOCUMENTATION,Time-series,Refer to definition matrix and release gate
+F1A6-009,SSB warns of regional/time-series breaks and changes in accounting around 2019–2020,SSB Municipal accounts About the statistics,VERIFIED_DOCUMENTATION,Time-series,Refer to definition matrix and release gate
+F1A6-010,Exact numerator/denominator account codes remain unreconciled for all nine indicators,No underlying 12364 account-level extract in supplied ZIP,BLOCKED_PENDING_SOURCE,Scientific definition,Refer to definition matrix and release gate
+F1A6-011,2016–2025 comparability for every indicator remains unverified,Only year 2016 in numerical extract; 12134 metadata spans 11 years,BLOCKED_PENDING_FULL_PANEL,Time-series,Refer to definition matrix and release gate
+F1A6-012,No strong/weak case or causal performance difference established,Pilot covers Halden/Moss 2016 only; cases not selected,NOT_TESTED,Research claims,Refer to definition matrix and release gate

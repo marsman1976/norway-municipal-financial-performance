@@ -1,0 +1,11 @@
+gate_id,requirement,status,category
+G01,2016 raw data hash and structure verified,PASS_FOR_TWO_MUNICIPALITIES,Provenance
+G02,2016 municipality codes valid in KLASS,PASS_FOR_TWO_MUNICIPALITIES,Identity
+G03,9 indicators have official labels/units,PASS,Metadata
+G04,Exact accounting definitions and numerator/denominator account codes,BLOCKED,Definitions
+G05,Account scope 2016–2025 and consolidation,BLOCKED,Accounting scope
+G06,P2 disposisjonsfond separate primary outcome available,BLOCKED,Research design
+G07,2016–2025 historical continuity and KOSTRA group bridges,BLOCKED,Time-series
+G08,"National raw dataset completeness, missing statuses, correction log",BLOCKED,Full-panel data
+G09,Independent reproduction of published ratios from accounting amounts,BLOCKED,Reconciliation
+G10,Strong/weak case selection and model use,PROHIBITED_UNTIL_G04_G09,Scientific
