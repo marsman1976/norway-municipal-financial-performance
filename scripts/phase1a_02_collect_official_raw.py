@@ -1,394 +1,324 @@
 #!/usr/bin/env python3
-"""Phase 1A.2: Collect ORIGINAL SSB PxWeb v2 and KLASS responses.
+"""Phase 1A — Repair 02: historically valid SSB municipality-code selection.
 
-NO case selection, financial calculations, merging, imputation, or modeling.
-Run from the VS Code repository root. All source response bytes stay unchanged.
-SSB API documentation: https://www.ssb.no/en/api/pxwebapiv2
+Safe modes:
+  --mode plan  : source-metadata + official year-specific KLASS, NO observations
+  --mode pilot : one year, table 12134, exactly 1–2 explicit municipality codes
+
+Bulk extraction is intentionally unavailable until historical continuity and
+accounting-definition gates are approved. Never edits earlier raw files.
+
+From repository root:
+  python scripts/phase1a_02_collect_official_raw.py --self-test
+  python scripts/phase1a_02_collect_official_raw.py --mode plan --years 2016
+  python scripts/phase1a_02_collect_official_raw.py --mode pilot --years 2016 --region-codes 0101 0104
 """
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 import math
-import sys
+import re
+import tempfile
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
 import requests
 
-API = "https://data.ssb.no/api/pxwebapi/v2/tables"
+SSB = "https://data.ssb.no/api/pxwebapi/v2/tables"
 KLASS = "https://data.ssb.no/api/klass/v1/classifications/131"
-KNOWN_TABLES = {
-    "12134": "Financial key figures",
-    "12364": "Financial basic data",
-    "07459": "Population by sex and age",
-    "12143": "Operating and balance sheet ratios",
-    "12135": "Debt financial ratios",
-    "12137": "Financial amounts per capita",
-    "13553": "Operating account financing",
-    "12333": "Investment financing",
-    "13551": "Detailed operating accounts (2020 onward)",
-    "13552": "Detailed investment accounts (2020 onward)",
-    "13202": "Detailed balance sheet (2020 onward)",
-    "12362": "Service-sector figures",
-    "12367": "Function-level expenditures",
-}
-HARD_CELL_LIMIT = 800_000
+KNOWN = {"12134", "12364", "12143", "07459"}
+RAW = Path("data/raw")
+REPORTS = Path("reports/phase1a/year_aware_collection")
 
 
-def utc_now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def sha256(data: bytes) -> str:
+def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def codes(meta: dict, dimension_id: str) -> list[str]:
-    index = meta["dimension"][dimension_id]["category"]["index"]
-    if isinstance(index, list):
-        answer = [str(x) for x in index]
-    elif isinstance(index, dict):
-        answer = [str(k) for k, _ in sorted(index.items(), key=lambda kv: int(kv[1]))]
-    else:
-        raise ValueError(f"Unexpected category index: {dimension_id}")
-    if not answer or len(set(answer)) != len(answer):
-        raise ValueError(f"Empty or duplicate dimension codes: {dimension_id}")
-    return answer
+def stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
-def dimension_ids(meta: dict) -> list[str]:
-    ids = meta.get("id")
-    dims = meta.get("dimension")
-    if not isinstance(ids, list) or not isinstance(dims, dict):
-        raise ValueError("Not recognizable JSON-stat2 metadata")
-    if set(ids) != set(dims):
-        raise ValueError("Metadata dimensions and IDs disagree")
-    return [str(x) for x in ids]
-
-
-def find_dimensions(meta: dict) -> tuple[str, str]:
-    ids = dimension_ids(meta)
-    role = meta.get("role", {})
-    time_candidates = [x for x in role.get("time", []) if x in ids]
-    time_candidates += [x for x in ids if x.lower() in ("tid", "time", "year")]
-    if not time_candidates:
-        time_candidates = [x for x in ids if "time" in x.lower() or "year" in x.lower()]
-    region_candidates = [x for x in ids if "region" in x.lower() or "kommun" in x.lower()]
-    if not region_candidates:
-        region_candidates = [x for x in ids if "region" in str(meta["dimension"][x].get("label", "")).lower()]
-    if not time_candidates or not region_candidates:
-        raise ValueError(f"Cannot unambiguously locate time/region dimensions: {ids}")
-    t, r = time_candidates[0], region_candidates[0]
-    if t == r:
-        raise ValueError("Time and region dimensions overlap")
-    return t, r
-
-
-def make_plan(meta: dict, table: str, years: range, max_cells: int, max_regions: int,
-              pilot: bool) -> tuple[list[dict], list[int]]:
-    ids = dimension_ids(meta)
-    time_id, region_id = find_dimensions(meta)
-    valid_years = set(codes(meta, time_id))
-    missing_years = [y for y in years if str(y) not in valid_years]
-    selected_years = [y for y in years if str(y) in valid_years]
-    regions = codes(meta, region_id)
-    other_dims = [d for d in ids if d not in (time_id, region_id)]
-    other_cells = math.prod(len(codes(meta, d)) for d in other_dims)
-    if other_cells > max_cells:
-        raise ValueError(f"{table}: one region-year exceeds {max_cells:,} cells; additional splitting required")
-    per_chunk = min(max_regions, max(1, max_cells // max(1, other_cells)))
-    if pilot:
-        regions, selected_years = regions[:2], selected_years[:1]
-    batches = [regions[i:i + per_chunk] for i in range(0, len(regions), per_chunk)]
-    result = []
-    for year in selected_years:
-        for batch_index, selection in enumerate(batches, start=1):
-            result.append({
-                "table": table, "year": year, "batch": batch_index,
-                "time_id": time_id, "region_id": region_id,
-                "region_codes": selection,
-                "other_sizes": {d: len(codes(meta, d)) for d in other_dims},
-                "expected_cells": len(selection) * other_cells,
-            })
-    return result, missing_years
-
-
-def data_url(spec: dict) -> str:
-    parameters = [
-        ("lang", "en"),
-        (f"valueCodes[{spec['time_id']}]", str(spec["year"])),
-        (f"valueCodes[{spec['region_id']}]", ",".join(spec["region_codes"])),
-    ]
-    for dim_id in spec["other_sizes"]:
-        parameters.append((f"valueCodes[{dim_id}]", "*"))
-    parameters.append(("outputFormat", "json-stat2"))
-    return f"{API}/{spec['table']}/data?{urlencode(parameters)}"
-
-
-def validate_response(doc: dict, spec: dict):
-    ids = dimension_ids(doc)
-    time_id, region_id = spec["time_id"], spec["region_id"]
-    if time_id not in ids or region_id not in ids:
-        raise ValueError("Response dropped time or region dimension")
-    for key, requested in ((time_id, {str(spec['year'])}),
-                           (region_id, set(spec['region_codes']))):
-        actual = set(codes(doc, key))
-        if actual != requested:
-            raise ValueError(f"Response {key} mismatch: requested {len(requested)} codes, got {len(actual)}")
-    sizes = [len(codes(doc, d)) for d in ids]
-    if sizes != doc.get("size"):
-        raise ValueError("JSON-stat2 size disagrees with dimension index")
-    n = math.prod(sizes)
-    if n != spec["expected_cells"] or n > HARD_CELL_LIMIT:
-        raise ValueError(f"Unexpected cell count: {n} vs planned {spec['expected_cells']}")
-    values = doc.get("value")
-    if isinstance(values, list):
-        if len(values) != n:
-            raise ValueError(f"Dense value array contains {len(values)} entries, expected {n}")
-    elif isinstance(values, dict):
-        if any((not str(k).isdigit()) or int(k) >= n or int(k) < 0 for k in values):
-            raise ValueError("Sparse values contain invalid cell indices")
-    else:
-        raise ValueError("Missing or unknown JSON-stat2 values")
-    status = doc.get("status", {})
-    if not isinstance(status, (dict, list)):
-        raise ValueError("Unexpected observation-status format")
-    return n, sum(v is None for v in values) if isinstance(values, list) else n - len(values)
-
-
-def save_unmodified(path: Path, data: bytes) -> str:
-    """Immutable-by-default: validate existing bytes; never overwrite source files."""
+def save_original(path: Path, data: bytes) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        previous = path.read_bytes()
-        if previous != data:
-            raise ValueError(f"Source changed; refusing to overwrite: {path}")
+        if path.read_bytes() != data:
+            raise FileExistsError(f"Original source differs: {path}")
         return "EXISTS_IDENTICAL"
-    path.write_bytes(data)
+    with path.open("xb") as handle:
+        handle.write(data)
     return "SAVED"
 
 
 class Client:
-    def __init__(self, pause_seconds: float):
+    def __init__(self, pause: float = 3.2):
+        self.pause = pause
+        self.last = 0.0
         self.session = requests.Session()
-        self.session.headers["User-Agent"] = "NorwegianMunicipalFinanceSourceAudit/1.0"
-        self.pause = max(3.0, pause_seconds)  # <=20 requests/minute on one client
-        self.last_request = 0.0
+        self.session.headers.update({"User-Agent": "MunicipalFinanceYearAwareAudit/2.0"})
 
     def get(self, url: str) -> bytes:
-        for attempt in range(4):
-            elapsed = time.monotonic() - self.last_request
-            if elapsed < self.pause:
-                time.sleep(self.pause - elapsed)
-            self.last_request = time.monotonic()
-            try:
-                res = self.session.get(url, timeout=120)
-                if res.status_code in (429, 500, 502, 503, 504) and attempt < 3:
-                    wait = min(60.0, max(float(res.headers.get("Retry-After", "0")), 5 * 2**attempt))
-                    print(f"  HTTP {res.status_code}; retry in {wait:.0f}s", flush=True)
-                    time.sleep(wait)
-                    continue
-                res.raise_for_status()
-                return res.content
-            except requests.RequestException:
-                if attempt == 3:
-                    raise
-                time.sleep(5 * 2**attempt)
-        raise RuntimeError("Request exhausted")
+        elapsed = time.monotonic() - self.last
+        if elapsed < self.pause:
+            time.sleep(self.pause - elapsed)
+        response = self.session.get(url, timeout=90)
+        self.last = time.monotonic()
+        response.raise_for_status()
+        return response.content
 
 
-def json_bytes(client: Client, url: str) -> tuple[bytes, dict]:
-    b = client.get(url)
-    obj = json.loads(b)
+def load_or_fetch(client: Client, path: Path, url: str) -> tuple[dict, dict]:
+    if path.exists():
+        raw = path.read_bytes()
+        source_state = "CACHED_NOT_REFETCHED"
+    else:
+        raw = client.get(url)
+        source_state = "NEW_DOWNLOAD"
+    obj = json.loads(raw)
     if not isinstance(obj, dict):
-        raise ValueError("Expected a JSON object")
-    return b, obj
+        raise ValueError(f"Expected JSON object at {url}")
+    if source_state == "NEW_DOWNLOAD":
+        save_original(path, raw)
+    return obj, {"path": str(path), "url": url, "sha256": digest(raw),
+                 "bytes": len(raw), "state": source_state}
 
 
-def result_row(source, part, url, destination, status, cells="", nulls="", error=""):
-    return {
-        "utc": utc_now(), "source": source, "part": part, "url": url,
-        "raw_file": str(destination), "status": status,
-        "sha256": sha256(destination.read_bytes()) if destination.exists() else "",
-        "bytes": destination.stat().st_size if destination.exists() else "",
-        "cells": cells, "null_cells_minimum": nulls, "error": str(error)[:700],
-    }
+def dimensions(doc: dict) -> list[str]:
+    ids, dims = doc.get("id"), doc.get("dimension")
+    if not isinstance(ids, list) or not isinstance(dims, dict):
+        raise ValueError("Missing JSON-stat2 dimensions")
+    if not ids or len(ids) != len(set(ids)) or set(ids) != set(dims):
+        raise ValueError("Inconsistent JSON-stat2 dimension IDs")
+    return ids
 
 
-def write_manifest(rows: list[dict], report_dir: Path):
-    report_dir.mkdir(parents=True, exist_ok=True)
-    stem = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = report_dir / f"phase1a2_collection_manifest_{stem}.csv"
-    fields = list(result_row("", "", "", Path("/not-a-real-file"), "").keys())
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=fields)
-        w.writeheader()
-        w.writerows(rows)
-    findings = report_dir / f"phase1a2_findings_{stem}.md"
-    successful = sum(x["status"] in ("SAVED", "EXISTS_IDENTICAL") for x in rows)
-    failed = sum(x["status"] == "FAIL" for x in rows)
-    findings.write_text(
-        "# Phase 1A.2 — Source collection findings\n\n"
-        f"Created (UTC): {utc_now()}\n\n"
-        f"- Successful or identical files: **{successful}**\n"
-        f"- Failed checks/requests: **{failed}**\n"
-        "- **Scientific readiness: BLOCKED.** Acquisition and structural checks do not establish correct accounting definitions, completeness, continuity, or matching eligibility.\n"
-        "- No municipality ranking, outcome calculation, model, or hypothesis test was performed.\n"
-        "- Review the manifest, source footnotes, observation statuses, and historical coverage before proceeding.\n",
-        encoding="utf-8",
-    )
-    print(f"Manifest: {path}\nFindings: {findings}")
+def codes(doc: dict, dimension: str) -> list[str]:
+    index = doc["dimension"][dimension]["category"]["index"]
+    if isinstance(index, list):
+        result = [str(x) for x in index]
+    elif isinstance(index, dict):
+        values = list(index.values())
+        if any(type(x) is not int for x in values) or sorted(values) != list(range(len(values))):
+            raise ValueError(f"Invalid category positions: {dimension}")
+        result = [str(k) for k, _ in sorted(index.items(), key=lambda x: x[1])]
+    else:
+        raise ValueError(f"Invalid category structure: {dimension}")
+    if not result or len(result) != len(set(result)):
+        raise ValueError(f"Empty or repeated category codes: {dimension}")
+    return result
 
 
-def acquire_klass(client: Client, raw: Path, rows: list[dict], years: range):
-    sources = [("changes", f"{KLASS}/changes.json?from={years.start}-01-01&to={years.stop}-01-01")]
-    sources += [(f"codes_{y}", f"{KLASS}/codesAt.json?date={y}-01-01") for y in years]
-    for name, url in sources:
-        p = raw / "klass" / f"{name}.json"
-        try:
-            b, obj = json_bytes(client, url)
-            key = "codeChanges" if name == "changes" else "codes"
-            if not isinstance(obj.get(key), list) or not obj[key]:
-                raise ValueError(f"KLASS {name}: missing/nonempty {key} list")
-            if name == "changes":
-                if any(not x.get("changeOccurred") or not (x.get("oldCode") or x.get("newCode"))
-                       for x in obj[key] if isinstance(x, dict)):
-                    raise ValueError("KLASS change records missing date or both codes")
-            state = save_unmodified(p, b)
-            rows.append(result_row("KLASS", name, url, p, state, len(obj[key])))
-            print("KLASS", name, state)
-        except Exception as e:
-            rows.append(result_row("KLASS", name, url, p, "FAIL", error=e))
-            print("KLASS", name, "FAIL", str(e)[:200])
+def region_and_time(doc: dict) -> tuple[str, str]:
+    ids = dimensions(doc)
+    regions = [d for d in ids if "region" in d.lower() or "kommun" in d.lower()]
+    years = [d for d in ids if d.lower() in ("tid", "year", "time")]
+    if len(regions) != 1 or len(years) != 1 or regions[0] == years[0]:
+        raise ValueError(f"Cannot uniquely identify municipality and year dimensions: {ids}")
+    return regions[0], years[0]
 
 
-def self_test():
-    meta = {
-        "id": ["KOKkommuneregion0000", "ContentsCode", "Tid"],
-        "dimension": {
-            "KOKkommuneregion0000": {"label": "Municipal region", "category": {"index": {"0301": 0, "3101": 1, "3103": 2}}},
-            "ContentsCode": {"category": {"index": ["M1", "M2"]}},
-            "Tid": {"category": {"index": ["2016", "2017"]}},
-        },
-        "role": {"time": ["Tid"]},
-    }
-    specs, missing = make_plan(meta, "12134", range(2016, 2018), 4, 100, False)
-    assert not missing and len(specs) == 4
-    assert specs[0]["expected_cells"] == 4
-    doc = {
-        "id": ["KOKkommuneregion0000", "ContentsCode", "Tid"],
-        "size": [2, 2, 1],
-        "dimension": {
-            "KOKkommuneregion0000": {"category": {"index": ["0301", "3101"]}},
-            "ContentsCode": {"category": {"index": ["M1", "M2"]}},
-            "Tid": {"category": {"index": ["2016"]}},
-        },
-        "value": [1, 2, None, 4], "status": {"2": ".."},
-    }
-    assert validate_response(doc, specs[0]) == (4, 1)
-    doc["size"] = [3, 2, 1]
+def klass_codes(doc: dict) -> dict[str, str]:
+    rows = doc.get("codes")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("KLASS codesAt must contain nonempty 'codes'")
+    result = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("code"), str):
+            raise ValueError("Malformed KLASS municipality code")
+        code = row["code"]
+        if code in result:
+            raise ValueError(f"Duplicate KLASS code: {code}")
+        result[code] = str(row.get("name", ""))
+    return result
+
+
+def make_year_plan(meta: dict, klass: dict, table: str, year: int,
+                   requested: list[str], max_cells: int) -> dict:
+    rid, tid = region_and_time(meta)
+    if str(year) not in codes(meta, tid):
+        raise ValueError(f"{table}: {year} absent from source metadata")
+    source_codes = codes(meta, rid)
+    historical = klass_codes(klass)
+    eligible = [c for c in source_codes if c in historical and re.fullmatch(r"\d{4}", c)]
+    if not eligible:
+        raise ValueError(f"{table}/{year}: no intersection with historical KLASS municipality codes")
+    if requested:
+        if len(set(requested)) != len(requested) or any(not re.fullmatch(r"\d{4}", c) for c in requested):
+            raise ValueError("Supply unique four-digit historical municipality codes")
+        not_in_source = [c for c in requested if c not in source_codes]
+        not_in_klass = [c for c in requested if c not in historical]
+        if not_in_source or not_in_klass:
+            raise ValueError(f"{year}: invalid historical selection; missing in SSB={not_in_source}, "
+                             f"missing in KLASS={not_in_klass}")
+        eligible = [c for c in source_codes if c in requested]
+    others = [d for d in dimensions(meta) if d not in (rid, tid)]
+    other_cells = math.prod(len(codes(meta, d)) for d in others)
+    if other_cells > max_cells:
+        raise ValueError(f"{table}: one municipality-year needs {other_cells} cells; split dimensions first")
+    per_part = max(1, max_cells // other_cells)
+    chunks = [eligible[i:i + per_part] for i in range(0, len(eligible), per_part)]
+    return {"table": table, "year": year, "region_id": rid, "time_id": tid,
+            "source_municipality_codes": len(source_codes), "klass_count": len(historical),
+            "selected": eligible, "not_valid_in_KLASS_this_year": sum(1 for c in source_codes if c not in historical),
+            "not_selected_due_to_requested_filter": sum(1 for c in source_codes if c in historical and c not in eligible),
+            "other_dimensions": others, "other_cells_per_municipality": other_cells,
+            "parts": [{"codes": part, "expected_cells": len(part) * other_cells}
+                      for part in chunks]}
+
+
+def observation_url(plan: dict, part: dict) -> str:
+    params = [("lang", "en"), (f"valueCodes[{plan['time_id']}]", str(plan["year"])),
+              (f"valueCodes[{plan['region_id']}]", ",".join(part["codes"]))]
+    params.extend((f"valueCodes[{d}]", "*") for d in plan["other_dimensions"])
+    params.append(("outputFormat", "json-stat2"))
+    return f"{SSB}/{plan['table']}/data?{urlencode(params)}"
+
+
+def observation_stats(doc: dict, meta: dict, plan: dict, part: dict) -> dict:
+    ids = dimensions(meta)
+    if dimensions(doc) != ids:
+        raise ValueError("Response dimension IDs/order differ from metadata")
+    for d in ids:
+        expected = ([str(plan["year"])] if d == plan["time_id"] else
+                    part["codes"] if d == plan["region_id"] else codes(meta, d))
+        if codes(doc, d) != expected:
+            raise ValueError(f"Response codes or order differ for {d}")
+    sizes = [len(codes(doc, d)) for d in ids]
+    n = math.prod(sizes)
+    if sizes != doc.get("size") or n != part["expected_cells"]:
+        raise ValueError("Response cell dimensions/count differ from query")
+    values, status = doc.get("value"), doc.get("status", {})
+    for label, obj in (("value", values), ("status", status)):
+        if isinstance(obj, list) and len(obj) != n:
+            raise ValueError(f"Invalid dense {label} length")
+        if isinstance(obj, dict) and any(not str(i).isdigit() or int(i) >= n for i in obj):
+            raise ValueError(f"Invalid sparse {label} indices")
+        if not isinstance(obj, (list, dict)):
+            raise ValueError(f"Unsupported {label} format")
+    at = lambda container, i: container[i] if isinstance(container, list) else container.get(str(i))
+    non_null = 0
+    flags = Counter()
+    for i in range(n):
+        value = at(values, i)
+        if value is None:
+            flags[str(at(status, i) or "UNANNOTATED")] += 1
+        elif type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f"Non-finite/non-numeric observation at cell {i}")
+        else:
+            non_null += 1
+    return {"cells": n, "numeric": non_null, "missing": n - non_null,
+            "missing_statuses": dict(flags)}
+
+
+def self_test() -> None:
+    region = "KOKkommuneregion0000"
+    ids = [region, "ContentsCode", "Tid"]
+    def dim(items):
+        return {"category": {"index": {item: i for i, item in enumerate(items)}}}
+    meta = {"id": ids, "dimension": {
+        region: dim(["0101", "0104", "3101", "3103"]),
+        "ContentsCode": dim(["A", "B"]), "Tid": dim(["2016", "2025"])}}
+    old = {"codes": [{"code": "0101", "name": "Halden"},
+                     {"code": "0104", "name": "Moss"}]}
+    new = {"codes": [{"code": "3101", "name": "Halden"},
+                     {"code": "3103", "name": "Moss"}]}
+    p16 = make_year_plan(meta, old, "12134", 2016, [], 100)
+    p25 = make_year_plan(meta, new, "12134", 2025, [], 100)
+    assert p16["selected"] == ["0101", "0104"]
+    assert p25["selected"] == ["3101", "3103"]
     try:
-        validate_response(doc, specs[0])
-        raise AssertionError("Invalid response was not rejected")
+        make_year_plan(meta, old, "12134", 2016, ["3101"], 100)
+        raise AssertionError("Invalid modern code accepted for 2016")
     except ValueError:
         pass
-    print("PASS: offline plan, JSON-stat2, mismatch-rejection tests")
+    part = p16["parts"][0]
+    response = {"id": ids, "size": [2, 2, 1], "dimension": {
+        region: dim(["0101", "0104"]), "ContentsCode": dim(["A", "B"]),
+        "Tid": dim(["2016"])}, "value": [1.0, None, 0.0, 3.0],
+        "status": {"1": "."}}
+    counts = observation_stats(response, meta, p16, part)
+    assert counts["numeric"] == 3 and counts["missing_statuses"] == {".": 1}
+    response["dimension"][region] = dim(["0104", "0101"])
+    try:
+        observation_stats(response, meta, p16, part)
+        raise AssertionError("Changed response region order accepted")
+    except ValueError:
+        pass
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "raw.json"
+        assert save_original(path, b"original") == "SAVED"
+        assert save_original(path, b"original") == "EXISTS_IDENTICAL"
+        try:
+            save_original(path, b"changed")
+            raise AssertionError("Original source overwritten")
+        except FileExistsError:
+            pass
+    print("PASS: 2016/2025 KLASS selection, modern-code rejection, JSON-stat2, immutable sources")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--tables", nargs="+", default=["12134", "12364", "07459"])
-    ap.add_argument("--klass", action="store_true", help="Also collect annual official KLASS snapshots/changes")
-    ap.add_argument("--start", type=int, default=2016)
-    ap.add_argument("--end", type=int, default=2025)
-    ap.add_argument("--pilot", action="store_true", help="Only first available year and first 2 region codes")
-    ap.add_argument("--dry-run", action="store_true", help="Plan queries; metadata only, no observations")
-    ap.add_argument("--self-test", action="store_true")
-    ap.add_argument("--max-cells", type=int, default=150_000)
-    ap.add_argument("--max-regions", type=int, default=300)
-    ap.add_argument("--pause", type=float, default=3.2)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=("plan", "pilot"), default="plan")
+    parser.add_argument("--table", choices=sorted(KNOWN), default="12134")
+    parser.add_argument("--years", nargs="+", type=int, default=[2016])
+    parser.add_argument("--region-codes", nargs="*", default=[])
+    parser.add_argument("--max-cells", type=int, default=10000)
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
     if args.self_test:
         self_test()
         return 0
-    if args.start > args.end or not 1 <= args.max_cells <= 750_000 or args.max_regions < 1:
-        ap.error("Invalid year or chunk-size arguments")
-    if any(x not in KNOWN_TABLES for x in args.tables):
-        ap.error("Unknown table code; verify source catalogue before adding it")
-    if args.dry_run and args.klass:
-        print("Dry run skips KLASS downloads; run without --dry-run for KLASS files")
-    out = Path("data/raw")
-    reports = Path("reports/phase1a")
-    client = Client(args.pause)
-    rows = []
-    errors = 0
-    period = range(args.start, args.end + 1)
-    for table in args.tables:
-        print(f"\n=== {table}: {KNOWN_TABLES[table]} ===", flush=True)
-        meta_url = f"{API}/{table}/metadata?lang=en"
-        info_url = f"{API}/{table}?lang=en"
-        base = out / "ssb" / ("pilot" if args.pilot else "complete") / table
-        try:
-            info_bytes, info = json_bytes(client, info_url)
-            meta_bytes, meta = json_bytes(client, meta_url)
-            if not isinstance(info.get("label"), str):
-                raise ValueError("Unexpected table-info response; missing title")
-            plan, missing = make_plan(meta, table, period, args.max_cells, args.max_regions, args.pilot)
-            if not plan:
-                raise ValueError("No requested years occur in source metadata")
-            for name, b, u in (("info", info_bytes, info_url), ("metadata", meta_bytes, meta_url)):
-                p = base / f"{name}.json"
-                state = "DRYRUN" if args.dry_run else save_unmodified(p, b)
-                rows.append(result_row(table, name, u, p, state))
-            if missing:
-                print(f"  COVERAGE WARNING — absent years: {missing}")
-                rows.append(result_row(table, "coverage", meta_url, base / "metadata.json",
-                                       "MISSING_YEARS", error=str(missing)))
-            print(f"  {len(plan)} data requests; max planned cells: {max(s['expected_cells'] for s in plan):,}")
-            for spec in plan:
-                name = f"year_{spec['year']}_part_{spec['batch']:04d}"
-                url = data_url(spec)
-                p = base / f"{name}.json"
-                if args.dry_run:
-                    continue
-                try:
-                    if p.exists():
-                        b = p.read_bytes()
-                        doc = json.loads(b)
-                        validate_response(doc, spec)
-                        state = "EXISTS_IDENTICAL"
-                    else:
-                        b, doc = json_bytes(client, url)
-                        cells, nulls = validate_response(doc, spec)
-                        state = save_unmodified(p, b)
-                    cells, nulls = validate_response(doc, spec)
-                    rows.append(result_row(table, name, url, p, state, cells, nulls))
-                    print(f"  {name} {state} cells={cells:,} null-at-least={nulls:,}", flush=True)
-                except Exception as e:
-                    errors += 1
-                    rows.append(result_row(table, name, url, p, "FAIL", error=e))
-                    print(f"  {name} FAIL {e}", flush=True)
-                    # Do not continue bulk downloading if schema/data integrity failed.
-                    break
-        except Exception as e:
-            errors += 1
-            rows.append(result_row(table, "metadata_or_plan", meta_url, base / "metadata.json", "FAIL", error=e))
-            print("  TABLE BLOCKED:", e, flush=True)
-    if args.klass and not args.dry_run:
-        acquire_klass(client, out, rows, period)
-    write_manifest(rows, reports)
-    print("\nSTATUS: SOURCE DATA NOT SCIENTIFICALLY VALIDATED. No ranking or modeling.")
-    if args.dry_run:
-        print("DRY RUN: no municipality observations were downloaded.")
-    if errors or any(r["status"] == "FAIL" for r in rows):
-        return 2
+    if not args.years or len(args.years) != len(set(args.years)) or any(y < 2016 or y > 2025 for y in args.years):
+        parser.error("Years must be unique and inside 2016–2025")
+    if args.max_cells < 1 or args.max_cells > 10000:
+        parser.error("This controlled repair allows at most 10,000 cells per request")
+    if args.mode == "pilot" and (args.table != "12134" or len(args.years) != 1 or not 1 <= len(args.region_codes) <= 2):
+        parser.error("Pilot requires table 12134, one year, and 1–2 explicit municipality codes")
+    client = Client()
+    metadata_url = f"{SSB}/{args.table}/metadata?lang=en"
+    meta, meta_receipt = load_or_fetch(client, RAW / "ssb" / "year_aware_v2" /
+                                       args.table / "metadata.json", metadata_url)
+    plans = []
+    receipts = [meta_receipt]
+    for year in args.years:
+        klass_url = f"{KLASS}/codesAt.json?date={year}-01-01"
+        klass, receipt = load_or_fetch(client, RAW / "klass" /
+                                        f"codes_{year}.json", klass_url)
+        receipts.append(receipt)
+        plan = make_year_plan(meta, klass, args.table, year, args.region_codes, args.max_cells)
+        plans.append(plan)
+        print(f"{args.table}/{year}: {len(plan['selected'])} historical codes; "
+              f"{len(plan['parts'])} planned part(s); KLASS/SSB intersection PASS")
+    result = {"mode": args.mode, "created_utc": datetime.now(timezone.utc).isoformat(),
+              "scientific_approval": "BLOCKED_ACCOUNTING_AND_HISTORICAL_CONTINUITY_REVIEW",
+              "sources": receipts, "plans": plans, "observations": []}
+    if args.mode == "pilot":
+        plan = plans[0]
+        part = plan["parts"][0]
+        url = observation_url(plan, part)
+        source_file = (RAW / "ssb" / "year_aware_v2" / args.table /
+                       f"year_{plan['year']}_codes_{'-'.join(part['codes'])}.json")
+        raw = client.get(url)
+        doc = json.loads(raw)
+        counts = observation_stats(doc, meta, plan, part)
+        state = save_original(source_file, raw)
+        result["observations"].append({"url": url, "file": str(source_file),
+                                        "sha256": digest(raw), "state": state, **counts})
+        print(f"PILOT: {counts['numeric']}/{counts['cells']} numeric; "
+              f"missing={counts['missing']} | {source_file} | {state}")
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    report = REPORTS / f"phase02_year_aware_{stamp()}.json"
+    with report.open("x", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print(f"WROTE: {report}")
+    print("SCIENTIFIC APPROVAL: BLOCKED — no full collection or case selection")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
